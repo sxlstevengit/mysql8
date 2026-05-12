@@ -1,0 +1,152 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql8-config
+  namespace: dev
+data:
+  my.cnf: |
+    [mysqld]
+    user=mysql
+    # 设置3306端口
+    port=3306
+    #GTID
+    server_id=133
+    # 设置mysql的安装目录
+    # basedir=/usr/local/mysql
+    # 设置mysql数据库的数据的存放目录
+    datadir=/var/lib/mysql
+    #pid
+    pid-file=/var/lib/mysql/mysqld.pid
+    socket=/var/lib/mysql/mysqld.sock
+    #数据库错误日志文件
+    log-error=/var/lib/mysql/mysqld_err.log
+    #time_zoen
+    default_time_zone="+8:00"
+    #慢查询sql日志设置
+    slow_query_log=1
+    slow_query_log_file=/var/lib/mysql/mysqld_slow.log
+    # 允许最大连接数
+    max_connections=3000
+    # 跳过密码登录
+    #skip-grant-tables
+    #只能用IP地址检查客户端的登录，不用主机名
+    #skip_name_resolve=1
+    # 允许连接失败的次数。这是为了防止有人从该主机试图攻击数据库系统
+    max_connect_errors=1000
+    # 服务端使用的字符集默认为UTF8
+    character-set-server=utf8mb4
+    #数据库字符集对应一些排序等规则，注意要和character-set-server对应
+    collation-server=utf8mb4_general_ci
+    # 创建新表时将使用的默认存储引擎
+    default-storage-engine=INNODB
+    # 默认使用“mysql_native_password”插件认证
+    default_authentication_plugin=mysql_native_password
+    #是否对sql语句大小写敏感，1表示不敏感
+    lower_case_table_names = 1
+    #MySQL连接闲置超过一定时间后(单位：秒)将会被强行关闭
+    #MySQL默认的wait_timeout  值为8个小时, interactive_timeout参数需要同时配置才能生效
+    interactive_timeout = 1800
+    wait_timeout = 1800
+    #Metadata Lock最大时长（秒）， 一般用于控制 alter操作的最大时长sine mysql5.6
+    #执行 DML操作时除了增加innodb事务锁外还增加Metadata Lock，其他alter（DDL）session将阻塞
+    lock_wait_timeout = 3600
+    #内部内存临时表的最大值。
+    #比如大数据量的group by ,order by时可能用到临时表，
+    #超过了这个值将写入磁盘，系统IO压力增大
+    tmp_table_size = 512M
+    max_heap_table_size = 512M
+    #mysql binlog日志文件保存的过期时间，过期后自动删除
+    #expire_logs_days=5
+    binlog_expire_logs_seconds=259200
+    # 兼容 5.7
+    sql_mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+    [mysql]
+    # 设置mysql客户端默认字符集
+    default-character-set=utf8mb4
+    [client]
+    # 设置mysql客户端连接服务端时默认使用的端口
+    socket=/var/lib/mysql/mysqld.sock
+    port=3306
+    default-character-set=utf8mb4
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql8-headless
+  namespace: dev
+  labels:
+    name: mysql8
+    k8s-app: mysql8
+spec:
+  selector:
+    name: mysql8
+  clusterIP: None
+  ports:
+  - name: mysql
+    port: 3306
+    targetPort: 3306
+  - name: mysqlx
+    port: 33060
+    targetPort: 33060
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql8
+  namespace: dev
+  labels:
+    name: mysql8
+    version: "8.0.42"
+    component: database
+    k8s-app: mysql8
+spec:
+  replicas: 1 # 设置为1，保证单实例运行避免数据冲突
+  selector:
+    matchLabels:
+      name: mysql8
+  strategy:
+    type: Recreate # 确保旧 Pod 停止后再启动新 Pod，防止 hostPath 锁定
+  template:
+    metadata:
+      labels:
+        name: mysql8
+        k8s-app: mysql8
+    spec:
+      hostname: mysql8
+      containers:
+      - name: mysql
+        image: mysql:8.0.42
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3306
+          protocol: TCP
+          # hostPort: 3306 # 如果需要固定主机端口可保留，但 Deployment 模式下需注意端口冲突
+        env:
+          - name: MYSQL_ROOT_PASSWORD
+            value: "rootpassword"
+        volumeMounts:
+        - mountPath: /var/lib/mysql
+          name: mysql-master-data
+        - mountPath: /etc/my.cnf
+          name: mysql-config
+          subPath: my.cnf
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "mysqladmin ping -u root -p${MYSQL_ROOT_PASSWORD}"
+          initialDelaySeconds: 30
+          failureThreshold: 3
+          periodSeconds: 60
+          timeoutSeconds: 5
+      volumes:
+      - name: mysql-master-data
+        hostPath:
+          path: /data/store/mysql
+          type: DirectoryOrCreate # 自动创建主机挂载目录
+      - name: mysql-config
+        configMap:
+          name: mysql8-config
+      nodeSelector:
+        kubernetes.io/hostname: i-024e3e907784a4af1 
