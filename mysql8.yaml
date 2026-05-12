@@ -80,7 +80,6 @@ metadata:
 spec:
   selector:
     name: mysql8
-  clusterIP: None
   ports:
   - name: mysql
     port: 3306
@@ -143,7 +142,7 @@ spec:
       volumes:
       - name: mysql-master-data
         hostPath:
-          path: /data/store/mysql
+          path: /tmp/store/mysql
           type: DirectoryOrCreate # 自动创建主机挂载目录
       - name: mysql-config
         configMap:
